@@ -20,6 +20,8 @@ package kafka.coordinator
 import kafka.common.TopicAndPartition
 import kafka.utils.CoreUtils
 
+import scala.collection.mutable
+
 private[coordinator] trait PartitionAssignor {
   /**
    * Assigns partitions to consumers in a group.
@@ -46,10 +48,11 @@ private[coordinator] trait PartitionAssignor {
 }
 
 private[coordinator] object PartitionAssignor {
-  val strategies = Set("range", "roundrobin")
+  val strategies = Set("range", "roundrobin", "fair")
 
   def createInstance(strategy: String) = strategy match {
     case "roundrobin" => new RoundRobinAssignor()
+    case "fair" => new FairAssignor()
     case _ => new RangeAssignor()
   }
 }
@@ -119,6 +122,57 @@ private[coordinator] class RangeAssignor extends PartitionAssignor {
         (startPartition until startPartition + numPartitions)
           .map(partition => (consumerForTopic, TopicAndPartition(topic, partition)))
       }
+    }
+    fill(aggregate(consumerPartitionPairs), topicsPerConsumer.keySet)
+  }
+}
+
+/**
+ * The fair assignor attempts to balance partitions across consumers such that each consumer is assigned approximately
+ * the same number of partitions, even if the consumer topic subscriptions are substantially different (if they are identical,
+ * then the result will be equivalent to that of the roundrobin assignor). The running total of assignments per consumer
+ * is tracked as the algorithm executes in order to accomplish this.
+ *
+ * The algorithm starts with the topic with the fewest consumer subscriptions, and assigns its partitions in roundrobin
+ * fashion. In the event of a tie for least subscriptions, the topic with the highest partition count is assigned first, as
+ * this generally creates a more balanced distribution. The final tiebreaker is the topic name.
+ *
+ * The partitions for subsequent topics are assigned to the subscribing consumer with the fewest number of assignments.
+ * In the event of a tie for least assignments, the tiebreaker is the consumer id, so that the assignment pattern is fairly
+ * similar to how the roundrobin assignor functions.
+ *
+ * For example, suppose there are two consumers C0 and C1, two topics t0 and t1, and each topic has 3 partitions,
+ * resulting in partitions t0p0, t0p1, t0p2, t1p0, t1p1, and t1p2. If both C0 and C1 are consuming t0, but only C1 is
+ * consuming t1 then the assignment will be:
+ * C0 -> [t0p0, t0p1, t0p2]
+ * C1 -> [t1p0, t1p1, t1p2]
+ */
+private[coordinator] class FairAssignor extends PartitionAssignor {
+  override def assign(topicsPerConsumer: Map[String, Set[String]],
+                      partitionsPerTopic: Map[String, Int]): Map[String, Set[TopicAndPartition]] = {
+    val consumers = topicsPerConsumer.keys.toSeq.sorted
+    val consumersPerTopic = invert(topicsPerConsumer)
+
+    // Map for tracking the total number of partitions assigned to each consumer
+    val consumerAssignmentCounts: mutable.Map[String, Int] = mutable.Map()
+    for (consumer <- consumers) {
+      consumerAssignmentCounts(consumer) = 0
+    }
+
+    // Assign topics with fewer consumers first, tiebreakers are most partitions, then topic name
+    val topicConsumerCounts = consumersPerTopic.map { case(topic, consumers) => (topic -> consumers.size) }
+    val allTopicPartitions = topicConsumerCounts.toList.sortBy(count => (count._2, -partitionsPerTopic(count._1), count._1)).flatMap {
+      topicConsumerCount => (0 until partitionsPerTopic(topicConsumerCount._1)).map(partition => TopicAndPartition(topicConsumerCount._1, partition))
+    }
+
+    val consumerPartitionPairs = allTopicPartitions.map { topicAndPartition =>
+      val topicConsumers = consumersPerTopic(topicAndPartition.topic)
+      val filteredCounts = consumerAssignmentCounts.toList.filter(consumer => topicConsumers.contains(consumer._1))
+
+      // Assign partition to consumer with least assignments, tiebreaker is consumer id
+      val consumer = filteredCounts.sortBy(count => (count._2, count._1)).head._1
+      consumerAssignmentCounts(consumer) += 1
+      (consumer, topicAndPartition)
     }
     fill(aggregate(consumerPartitionPairs), topicsPerConsumer.keySet)
   }

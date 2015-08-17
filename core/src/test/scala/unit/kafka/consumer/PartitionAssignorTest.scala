@@ -42,7 +42,7 @@ class PartitionAssignorTest extends Logging {
       val topicPartitionCounts = Map((1 to topicCount).map(topic => {
         ("topic-" + topic, PartitionAssignorTest.MinPartitionCount.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxPartitionCount)))
       }).toSeq:_*)
-      
+
       val subscriptions = Map((1 to consumerCount).map(consumer => {
         val streamCount = 1.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxStreamCount + 1))
         ("g1c" + consumer, WildcardSubscriptionInfo(streamCount, ".*", isWhitelist = true))
@@ -77,6 +77,87 @@ class PartitionAssignorTest extends Logging {
       EasyMock.replay(zkClient)
 
       PartitionAssignorTest.assignAndVerify(scenario, assignor, zkClient)
+    })
+  }
+
+  @Test
+  def testFairPartitionAssignor() {
+    val assignor = new FairAssignor
+
+    /** various scenarios with only wildcard consumers */
+    (1 to PartitionAssignorTest.TestCaseCount).foreach (testCase => {
+      val consumerCount = 1.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxConsumerCount + 1))
+      val topicCount = PartitionAssignorTest.MinTopicCount.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxTopicCount + 1))
+
+      val topicPartitionCounts = Map((1 to topicCount).map(topic => {
+        ("topic-" + topic, PartitionAssignorTest.MinPartitionCount.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxPartitionCount)))
+      }).toSeq:_*)
+
+      val subscriptions = Map((1 to consumerCount).map(consumer => {
+        val streamCount = 1.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxStreamCount + 1))
+        ("g1c" + consumer, WildcardSubscriptionInfo(streamCount, ".*", isWhitelist = true))
+      }).toSeq:_*)
+      val scenario = Scenario("g1", topicPartitionCounts, subscriptions)
+      val zkClient = PartitionAssignorTest.setupZkClientMock(scenario)
+      EasyMock.replay(zkClient)
+      PartitionAssignorTest.assignAndVerify(scenario, assignor, zkClient, verifyAssignmentIsUniform = true)
+    })
+  }
+
+  @Test
+  def testFairPartitionAssignorStaticSubscriptions() {
+    val assignor = new FairAssignor
+
+    /** test static subscription scenarios */
+    (1 to PartitionAssignorTest.TestCaseCount).foreach (testCase => {
+      val consumerCount = 1.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxConsumerCount + 1))
+      val topicCount = PartitionAssignorTest.MinTopicCount.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxTopicCount + 1))
+
+      val topicPartitionCounts = Map((1 to topicCount).map(topic => {
+        ("topic-" + topic, PartitionAssignorTest.MinPartitionCount.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxPartitionCount)))
+      }).toSeq:_*)
+
+      val subscriptions = Map((1 to consumerCount).map(consumer => {
+        val streamCounts = Map((1 to topicCount).map(topic => {
+            ("topic-" + topic, 1)
+          }).toSeq:_*)
+        ("g1c" + consumer, StaticSubscriptionInfo(streamCounts))
+      }).toSeq:_*)
+      val scenario = Scenario("g1", topicPartitionCounts, subscriptions)
+      val zkClient = PartitionAssignorTest.setupZkClientMock(scenario)
+      EasyMock.replay(zkClient)
+
+      PartitionAssignorTest.assignAndVerify(scenario, assignor, zkClient, verifyAssignmentIsUniform = true)
+    })
+  }
+
+  @Test
+  def testFairPartitionAssignorUnbalancedStaticSubscriptions() {
+    val assignor = new FairAssignor
+    val minConsumerCount = 5
+
+    /** test unbalanced static subscription scenarios */
+    (1 to PartitionAssignorTest.TestCaseCount).foreach (testCase => {
+      val consumerCount = minConsumerCount.max(TestUtils.random.nextInt(PartitionAssignorTest.MaxConsumerCount + 1))
+      val topicCount = 10
+
+      val topicPartitionCounts = Map((1 to topicCount).map(topic => {
+        ("topic-" + topic, 10)
+      }).toSeq:_*)
+
+      val subscriptions = Map((1 to consumerCount).map(consumer => {
+        // Exclude some topics from some consumers
+        val topicRange = (1 to topicCount - consumer % minConsumerCount)
+        val streamCounts = Map(topicRange.map(topic => {
+            ("topic-" + topic, 3)
+          }).toSeq:_*)
+        ("g1c" + consumer, StaticSubscriptionInfo(streamCounts))
+      }).toSeq:_*)
+      val scenario = Scenario("g1", topicPartitionCounts, subscriptions)
+      val zkClient = PartitionAssignorTest.setupZkClientMock(scenario)
+      EasyMock.replay(zkClient)
+
+      PartitionAssignorTest.assignAndVerify(scenario, assignor, zkClient, verifyAssignmentIsUniform = true)
     })
   }
 }

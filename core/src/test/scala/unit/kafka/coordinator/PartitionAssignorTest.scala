@@ -162,6 +162,34 @@ class PartitionAssignorTest extends JUnitSuite {
   }
 
   @Test
+  def testRangeAssignorMultipleConsumersUnbalancedSubscriptions() {
+    val topic1 = "topic1"
+    val topic2 = "topic2"
+    val topic3 = "topic3"
+    val topic4 = "topic4"
+    val topic5 = "topic5"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val consumer3 = "consumer3"
+    val consumer4 = "consumer4"
+    val oddTopicPartitions = 2
+    val evenTopicPartitions = 1
+    val assignor = new RangeAssignor()
+    val oddTopics = Set(topic1, topic3, topic5)
+    val allTopics = Set(topic1, topic2, topic3, topic4, topic5)
+    val topicsPerConsumer = Map(consumer1 -> allTopics, consumer2 -> oddTopics, consumer3 -> oddTopics, consumer4 -> allTopics)
+    val partitionsPerTopic = Map(topic1 -> oddTopicPartitions, topic2 -> evenTopicPartitions, topic3 -> oddTopicPartitions,
+      topic4 -> evenTopicPartitions, topic5 -> oddTopicPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic1 -> Set(0), topic2 -> Set(0), topic3 -> Set(0), topic4 -> Set(0), topic5 -> Set(0))),
+      consumer2 -> topicAndPartitions(Map(topic1 -> Set(1), topic3 -> Set(1), topic5 -> Set(1))),
+      consumer3 -> Set.empty[TopicAndPartition],
+      consumer4 -> Set.empty[TopicAndPartition])
+    assertEquals(expected, actual)
+  }
+
+  @Test
   def testRoundRobinAssignorOneConsumerNoTopic() {
     val consumer = "consumer"
     val assignor = new RoundRobinAssignor()
@@ -294,6 +322,198 @@ class PartitionAssignorTest extends JUnitSuite {
     val expected = Map(
       consumer1 -> topicAndPartitions(Map(topic1 -> Set(0, 2), topic2 -> Set(1))),
       consumer2 -> topicAndPartitions(Map(topic1 -> Set(1), topic2 -> Set(0, 2))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testRoundRobinAssignorMultipleConsumersUnbalancedSubscriptions() {
+    val topic1 = "topic1"
+    val topic2 = "topic2"
+    val topic3 = "topic3"
+    val topic4 = "topic4"
+    val topic5 = "topic5"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val consumer3 = "consumer3"
+    val consumer4 = "consumer4"
+    val oddTopicPartitions = 2
+    val evenTopicPartitions = 1
+    val assignor = new RoundRobinAssignor()
+    val oddTopics = Set(topic1, topic3, topic5)
+    val allTopics = Set(topic1, topic2, topic3, topic4, topic5)
+    val topicsPerConsumer = Map(consumer1 -> allTopics, consumer2 -> oddTopics, consumer3 -> oddTopics, consumer4 -> allTopics)
+    val partitionsPerTopic = Map(topic1 -> oddTopicPartitions, topic2 -> evenTopicPartitions, topic3 -> oddTopicPartitions,
+      topic4 -> evenTopicPartitions, topic5 -> oddTopicPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic1 -> Set(0), topic3 -> Set(0), topic5 -> Set(0))),
+      consumer2 -> topicAndPartitions(Map(topic1 -> Set(1), topic3 -> Set(1), topic5 -> Set(1))),
+      consumer3 -> Set.empty[TopicAndPartition],
+      consumer4 -> topicAndPartitions(Map(topic2 -> Set(0), topic4 -> Set(0))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorOneConsumerNoTopic() {
+    val consumer = "consumer"
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer -> Set.empty[String])
+    val partitionsPerTopic = Map.empty[String, Int]
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(consumer -> Set.empty[TopicAndPartition])
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorOneConsumerNonexistentTopic() {
+    val topic = "topic"
+    val consumer = "consumer"
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer -> Set(topic))
+    val partitionsPerTopic = Map(topic -> 0)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(consumer -> Set.empty[TopicAndPartition])
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorOneConsumerOneTopic() {
+    val topic = "topic"
+    val consumer = "consumer"
+    val numPartitions = 3
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer -> Set(topic))
+    val partitionsPerTopic = Map(topic -> numPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(consumer -> topicAndPartitions(Map(topic -> Set(0, 1, 2))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorOnlyAssignsPartitionsFromSubscribedTopics() {
+    val subscribedTopic = "topic"
+    val otherTopic = "other"
+    val consumer = "consumer"
+    val subscribedTopicNumPartitions = 3
+    val otherTopicNumPartitions = 3
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer -> Set(subscribedTopic))
+    val partitionsPerTopic = Map(subscribedTopic -> subscribedTopicNumPartitions, otherTopic -> otherTopicNumPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(consumer -> topicAndPartitions(Map(subscribedTopic -> Set(0, 1, 2))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorOneConsumerMultipleTopics() {
+    val topic1 = "topic1"
+    val topic2 = "topic2"
+    val consumer = "consumer"
+    val numTopic1Partitions = 1
+    val numTopic2Partitions = 2
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer -> Set(topic1, topic2))
+    val partitionsPerTopic = Map(topic1 -> numTopic1Partitions, topic2 -> numTopic2Partitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(consumer -> topicAndPartitions(Map(topic1 -> Set(0), topic2 -> Set(0, 1))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorTwoConsumersOneTopicOnePartition() {
+    val topic = "topic"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val numPartitions = 1
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer1 -> Set(topic), consumer2 -> Set(topic))
+    val partitionsPerTopic = Map(topic -> numPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic -> Set(0))),
+      consumer2 -> Set.empty[TopicAndPartition])
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorTwoConsumersOneTopicTwoPartitions() {
+    val topic = "topic"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val numPartitions = 2
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer1 -> Set(topic), consumer2 -> Set(topic))
+    val partitionsPerTopic = Map(topic -> numPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic -> Set(0))),
+      consumer2 -> topicAndPartitions(Map(topic -> Set(1))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorMultipleConsumersMixedTopics() {
+    val topic1 = "topic1"
+    val topic2 = "topic2"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val consumer3 = "consumer3"
+    val numTopic1Partitions = 3
+    val numTopic2Partitions = 2
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer1 -> Set(topic1), consumer2 -> Set(topic1, topic2), consumer3 -> Set(topic1))
+    val partitionsPerTopic = Map(topic1 -> numTopic1Partitions, topic2 -> numTopic2Partitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic1 -> Set(0, 2))),
+      consumer2 -> topicAndPartitions(Map(topic2 -> Set(0, 1))),
+      consumer3 -> topicAndPartitions(Map(topic1 -> Set(1))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorTwoConsumersTwoTopicsSixPartitions() {
+    val topic1 = "topic1"
+    val topic2 = "topic2"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val numTopic1Partitions = 3
+    val numTopic2Partitions = 3
+    val assignor = new FairAssignor()
+    val topicsPerConsumer = Map(consumer1 -> Set(topic1, topic2), consumer2 -> Set(topic1, topic2))
+    val partitionsPerTopic = Map(topic1 -> numTopic1Partitions, topic2 -> numTopic2Partitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic1 -> Set(0, 2), topic2 -> Set(1))),
+      consumer2 -> topicAndPartitions(Map(topic1 -> Set(1), topic2 -> Set(0, 2))))
+    assertEquals(expected, actual)
+  }
+
+  @Test
+  def testFairAssignorMultipleConsumersUnbalancedSubscriptions() {
+    val topic1 = "topic1"
+    val topic2 = "topic2"
+    val topic3 = "topic3"
+    val topic4 = "topic4"
+    val topic5 = "topic5"
+    val consumer1 = "consumer1"
+    val consumer2 = "consumer2"
+    val consumer3 = "consumer3"
+    val consumer4 = "consumer4"
+    val oddTopicPartitions = 2
+    val evenTopicPartitions = 1
+    val assignor = new FairAssignor()
+    val oddTopics = Set(topic1, topic3, topic5)
+    val allTopics = Set(topic1, topic2, topic3, topic4, topic5)
+    val topicsPerConsumer = Map(consumer1 -> allTopics, consumer2 -> oddTopics, consumer3 -> oddTopics, consumer4 -> allTopics)
+    val partitionsPerTopic = Map(topic1 -> oddTopicPartitions, topic2 -> evenTopicPartitions, topic3 -> oddTopicPartitions,
+      topic4 -> evenTopicPartitions, topic5 -> oddTopicPartitions)
+    val actual = assignor.assign(topicsPerConsumer, partitionsPerTopic)
+    val expected = Map(
+      consumer1 -> topicAndPartitions(Map(topic2 -> Set(0), topic3 -> Set(0))),
+      consumer2 -> topicAndPartitions(Map(topic1 -> Set(0), topic3 -> Set(1))),
+      consumer3 -> topicAndPartitions(Map(topic1 -> Set(1), topic5 -> Set(0))),
+      consumer4 -> topicAndPartitions(Map(topic4 -> Set(0), topic5 -> Set(1))))
     assertEquals(expected, actual)
   }
 
