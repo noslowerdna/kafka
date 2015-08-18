@@ -234,7 +234,7 @@ class FairAssignor() extends PartitionAssignor with Logging {
         val filteredCounts = consumerAssignmentCounts.toList.filter(consumer => topicConsumers.contains(consumer._1))
 
         // Assign partition to consumer thread with least assignments, tiebreaker is consumer thread id
-        val threadId = filteredCounts.sortBy(count => (count._2, count._1)).head._1
+        val threadId = filteredCounts.sortBy(count => (count._2, count._1.toString)).head._1
         consumerAssignmentCounts(threadId) += 1
 
         // record the partition ownership decision
